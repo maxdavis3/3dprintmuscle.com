@@ -159,44 +159,49 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /* ========================================
-   BIOPRINTING NEWS FEED (RSS via rss2json)
+   BIOPRINTING NEWS FEED (Direct RSS via corsproxy.io)
    ======================================== */
 (function() {
   var feeds = [
-    { url: 'https://news.google.com/rss/search?q=bioprinting&hl=en-US&gl=US&ceid=US:en', name: 'Google News' },
-    { url: 'https://news.google.com/rss/search?q=tissue+engineering+3d+printing&hl=en-US&gl=US&ceid=US:en', name: 'Google News' },
-    { url: 'https://news.google.com/rss/search?q=regenerative+medicine+bioprint&hl=en-US&gl=US&ceid=US:en', name: 'Google News' },
-    { url: 'https://news.google.com/rss/search?q=organ+bioprinting&hl=en-US&gl=US&ceid=US:en', name: 'Google News' }
+    'https://news.google.com/rss/search?q=bioprinting&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=tissue+engineering+3d+printing&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=regenerative+medicine+bioprint&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=organ+bioprinting&hl=en-US&gl=US&ceid=US:en'
   ];
-  var rss2jsonBase = 'https://api.rss2json.com/v1/api.json?rss_url=';
+  var proxy = 'https://corsproxy.io/?';
   var allArticles = [];
   var feedsLoaded = 0;
-  var feedsTotal = feeds.length;
   var rendered = false;
+
+  function getNodeText(item, tag) {
+    var nodes = item.getElementsByTagName(tag);
+    return nodes.length ? nodes[0].textContent.trim() : '';
+  }
 
   function renderNews() {
     if (rendered) return;
     rendered = true;
     var container = document.getElementById('news-feed');
     if (!container) return;
-    var sorted = allArticles.sort(function(a, b) {
+    var seen = {};
+    var sorted = allArticles.filter(function(a) {
+      if (seen[a.link]) return false;
+      seen[a.link] = true;
+      return true;
+    }).sort(function(a, b) {
       return new Date(b.pubDate) - new Date(a.pubDate);
     }).slice(0, 3);
     if (sorted.length === 0) {
-      container.innerHTML = '<div class="news-error"><p>Unable to load news at this time.</p><a href="https://www.labiotech.eu/tag/bioprinting/" target="_blank" rel="noopener" class="btn btn-outline">Visit Labiotech</a></div>';
+      container.innerHTML = '<div class="news-error"><p>Unable to load news at this time. <a href="https://news.google.com/search?q=bioprinting" target="_blank" rel="noopener">Search Google News</a></p></div>';
       return;
     }
     container.innerHTML = '<div class="news-grid">' + sorted.map(function(article) {
-      var imgHtml = article.thumbnail
-        ? '<img src="' + article.thumbnail + '" alt="' + article.source + ' news" loading="lazy" onerror="this.style.display='none';this.nextSibling.style.display='block'">' +
-          '<span class="news-placeholder" style="display:none">&#129516;</span>'
-        : '<span class="news-placeholder">&#129516;</span>';
       var desc = article.description ? article.description.replace(/<[^>]+>/g, '').substring(0, 120) + '…' : '';
       var date = article.pubDate ? new Date(article.pubDate).toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'}) : '';
       return '<div class="news-card">' +
-        '<div class="news-card-image">' + imgHtml + '</div>' +
+        '<div class="news-card-image"><span class="news-placeholder">&#129516;</span></div>' +
         '<div class="news-card-body">' +
-          '<div class="news-card-source">' + article.source + '</div>' +
+          '<div class="news-card-source">' + (article.source || 'Bioprinting News') + '</div>' +
           '<h3>' + article.title + '</h3>' +
           (desc ? '<p>' + desc + '</p>' : '') +
           '<div class="news-card-date">' + date + '</div>' +
@@ -205,33 +210,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }).join('') + '</div>';
   }
 
-  var globalTimeout = setTimeout(renderNews, 9000);
+  var globalTimeout = setTimeout(renderNews, 10000);
 
-  feeds.forEach(function(feed) {
-    var feedTimeout = setTimeout(function() {
-      feedsLoaded++;
-      if (feedsLoaded === feedsTotal) { clearTimeout(globalTimeout); renderNews(); }
-    }, 7000);
-    fetch(rss2jsonBase + encodeURIComponent(feed.url) + '&count=4')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        clearTimeout(feedTimeout);
-        if (data.items) {
-          data.items.forEach(function(item) {
-            if (item.title && item.link) {
-              allArticles.push({ title: item.title, link: item.link,
-                thumbnail: item.thumbnail || '', description: item.description || '',
-                pubDate: item.pubDate || '', source: feed.name });
-            }
-          });
+  feeds.forEach(function(feedUrl) {
+    fetch(proxy + encodeURIComponent(feedUrl))
+      .then(function(r) { return r.text(); })
+      .then(function(xml) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(xml, 'text/xml');
+        var items = doc.getElementsByTagName('item');
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          var title = getNodeText(item, 'title');
+          var link = getNodeText(item, 'link') || getNodeText(item, 'guid');
+          var pubDate = getNodeText(item, 'pubDate');
+          var description = getNodeText(item, 'description');
+          var sourceNode = item.getElementsByTagName('source');
+          var source = sourceNode.length ? sourceNode[0].textContent.trim() : 'Bioprinting News';
+          if (title && link) {
+            allArticles.push({ title: title, link: link, pubDate: pubDate, description: description, source: source });
+          }
         }
         feedsLoaded++;
-        if (feedsLoaded === feedsTotal) { clearTimeout(globalTimeout); renderNews(); }
+        if (feedsLoaded === feeds.length) { clearTimeout(globalTimeout); renderNews(); }
       })
       .catch(function() {
-        clearTimeout(feedTimeout);
         feedsLoaded++;
-        if (feedsLoaded === feedsTotal) { clearTimeout(globalTimeout); renderNews(); }
+        if (feedsLoaded === feeds.length) { clearTimeout(globalTimeout); renderNews(); }
       });
   });
 
